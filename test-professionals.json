@@ -1,0 +1,58 @@
+[
+  {
+    "name": "João Silva",
+    "role": "Tech Lead",
+    "seniority": "Senior",
+    "hourlyCost": 110.12,
+    "skills": ["Node.js", "TypeScript", "React", "Architecture", "Leadership"]
+  },
+  {
+    "name": "Maria Santos",
+    "role": "Backend Developer",
+    "seniority": "Pleno",
+    "hourlyCost": 98.21,
+    "skills": ["Node.js", "Express", "PostgreSQL", "REST APIs", "Docker"]
+  },
+  {
+    "name": "Pedro Costa",
+    "role": "Frontend Developer",
+    "seniority": "Pleno",
+    "hourlyCost": 98.21,
+    "skills": ["React", "TypeScript", "Tailwind CSS", "Redux", "Jest"]
+  },
+  {
+    "name": "Ana Oliveira",
+    "role": "UX Designer",
+    "seniority": "Pleno",
+    "hourlyCost": 59.52,
+    "skills": ["Figma", "Adobe XD", "User Research", "Prototyping", "UI Design"]
+  },
+  {
+    "name": "Carlos Ferreira",
+    "role": "Architect",
+    "seniority": "Especialista",
+    "hourlyCost": 148.81,
+    "skills": ["Cloud Architecture", "Microservices", "AWS", "System Design", "Security"]
+  },
+  {
+    "name": "Juliana Almeida",
+    "role": "Product Owner",
+    "seniority": "Senior",
+    "hourlyCost": 77.38,
+    "skills": ["Scrum", "Product Management", "Roadmapping", "Stakeholder Management", "Agile"]
+  },
+  {
+    "name": "Ricardo Lima",
+    "role": "DevOps Engineer",
+    "seniority": "Senior",
+    "hourlyCost": 95.24,
+    "skills": ["Kubernetes", "Docker", "CI/CD", "Terraform", "Monitoring"]
+  },
+  {
+    "name": "Fernanda Souza",
+    "role": "QA Engineer",
+    "seniority": "Pleno",
+    "hourlyCost": 44.64,
+    "skills": ["Test Automation", "Selenium", "Jest", "API Testing", "Quality Assurance"]
+  }
+]
