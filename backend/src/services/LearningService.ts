@@ -130,15 +130,32 @@ export class LearningService {
     const metricsRepo = AppDataSource.getRepository(ProposalMetrics);
     const metrics = this.calculateAccuracyMetrics(differences);
 
-    const proposalMetrics = metricsRepo.create({
-      proposalId,
-      ...metrics,
+    // Verificar se já existe métrica para esta proposta
+    const existingMetric = await metricsRepo.findOne({
+      where: { proposalId },
     });
 
-    await metricsRepo.save(proposalMetrics);
-    logger.info(
-      `✅ Métricas salvas para proposta ${proposalId}: ${metrics.overallAccuracy.toFixed(1)}% acurácia`
-    );
+    if (existingMetric) {
+      // Atualizar métrica existente
+      existingMetric.durationAccuracy = metrics.durationAccuracy;
+      existingMetric.costAccuracy = metrics.costAccuracy;
+      existingMetric.teamSizeAccuracy = metrics.teamSizeAccuracy;
+      existingMetric.overallAccuracy = metrics.overallAccuracy;
+      await metricsRepo.save(existingMetric);
+      logger.info(
+        `✅ Métricas atualizadas para proposta ${proposalId}: ${metrics.overallAccuracy.toFixed(1)}% acurácia`
+      );
+    } else {
+      // Criar nova métrica
+      const proposalMetrics = metricsRepo.create({
+        proposalId,
+        ...metrics,
+      });
+      await metricsRepo.save(proposalMetrics);
+      logger.info(
+        `✅ Métricas salvas para proposta ${proposalId}: ${metrics.overallAccuracy.toFixed(1)}% acurácia`
+      );
+    }
   }
 
   /**

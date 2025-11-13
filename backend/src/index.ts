@@ -48,6 +48,9 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Servir arquivos estáticos da pasta uploads
+app.use('/uploads', express.static('uploads'));
+
 // Middleware de logging HTTP
 app.use(requestLogger);
 

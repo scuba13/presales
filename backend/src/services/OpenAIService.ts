@@ -2,6 +2,13 @@ import OpenAI from 'openai';
 import { logger } from '../config/logger';
 import fs from 'fs/promises';
 import path from 'path';
+import { createReadStream } from 'fs';
+import { File } from 'node:buffer';
+
+// Polyfill para Node 18
+if (typeof globalThis.File === 'undefined') {
+  (globalThis as any).File = File;
+}
 
 // Tipos (compatíveis com ClaudeService)
 export interface ProjectAnalysis {
@@ -85,7 +92,7 @@ export class OpenAIService {
     for (const file of files) {
       const ext = path.extname(file.path).toLowerCase();
 
-      // Para imagens, usar vision
+      // Para imagens, usar vision com base64
       if (file.mimetype.startsWith('image/')) {
         const base64 = await this.fileToBase64(file.path);
         content.push({
@@ -96,13 +103,22 @@ export class OpenAIService {
           },
         });
       }
-      // Para PDFs e outros documentos de texto, extrair texto (simplificado)
+      // Para PDFs e outros documentos, fazer upload para OpenAI e usar file_id
       else if (file.mimetype === 'application/pdf' || file.mimetype.includes('text')) {
-        // Nota: OpenAI não suporta PDF direto como Claude
-        // Aqui você poderia usar pdf-parse se necessário
+        logger.info(`📤 Fazendo upload do arquivo ${path.basename(file.path)} para OpenAI...`);
+
+        const uploaded = await this.client.files.create({
+          file: createReadStream(file.path),
+          purpose: 'user_data',
+        });
+
+        logger.info(`✅ Arquivo enviado com file_id: ${uploaded.id}`);
+
         content.push({
-          type: 'text',
-          text: `[Documento: ${path.basename(file.path)}]\n(Análise de PDF requer extração de texto prévia)`,
+          type: 'file',
+          file: {
+            file_id: uploaded.id,
+          },
         });
       }
     }
@@ -121,19 +137,66 @@ export class OpenAIService {
       try {
         logger.info(`📡 Chamando OpenAI API (tentativa ${attempt}/${maxRetries})`);
 
-        // Modelos o1 e o1-mini têm parâmetros diferentes
+        // Modelos o1 e GPT-5 têm parâmetros diferentes
         const isO1Model = this.model.startsWith('o1');
+        const isGPT5Model = this.model.startsWith('gpt-5');
+        const isReasoningModel = isO1Model || isGPT5Model;
+
+        // Para modelos o1/GPT-5: combinar system com user prompt (não suportam role 'system')
+        let processedMessages = messages;
+        if (isReasoningModel && messages.length > 0 && messages[0].role === 'system') {
+          logger.info(`🔄 Modelo ${isO1Model ? 'o1' : 'GPT-5'} detectado - combinando system prompt com user prompt`);
+          const systemContent = messages[0].content;
+          const userMessage = messages[1];
+
+          // Para o1: apenas texto (não suporta imagens)
+          // Para GPT-5: suporta imagens e documentos
+          if (isO1Model) {
+            // Extrair apenas texto para o1
+            let userText = '';
+            if (typeof userMessage.content === 'string') {
+              userText = userMessage.content;
+            } else if (Array.isArray(userMessage.content)) {
+              logger.info(`📋 User message tem ${userMessage.content.length} blocos`);
+              const textBlocks = userMessage.content.filter((block: any) => block.type === 'text');
+              logger.info(`📝 Blocos de texto: ${textBlocks.length}`);
+              userText = textBlocks.map((block: any) => block.text).join('\n\n');
+            }
+
+            // Combinar system + user como texto puro (o1 só aceita texto)
+            const combinedContent = `${systemContent}\n\n${userText}`;
+            processedMessages = [
+              { role: 'user', content: combinedContent },
+              ...messages.slice(2),
+            ];
+            logger.info(`✅ Content length: ${combinedContent.length} caracteres`);
+          } else {
+            // GPT-5: manter imagens e documentos
+            const combinedContent = typeof userMessage.content === 'string'
+              ? `${systemContent}\n\n${userMessage.content}`
+              : [{ type: 'text', text: systemContent }, ...userMessage.content];
+
+            processedMessages = [
+              { role: 'user', content: combinedContent },
+              ...messages.slice(2),
+            ];
+          }
+
+          logger.info(`✅ Mensagens processadas: ${processedMessages.length} mensagem(ns)`);
+          logger.info(`✅ Primeira mensagem role: ${processedMessages[0].role}`);
+        }
+
         const requestParams: any = {
           model: this.model,
-          messages,
+          messages: processedMessages,
         };
 
         // Adicionar parâmetros baseado no modelo
-        if (isO1Model) {
-          // Modelos o1 não suportam temperature nem response_format
-          requestParams.max_completion_tokens = 4096;
+        if (isReasoningModel) {
+          // Modelos o1 e GPT-5 não suportam temperature nem response_format
+          requestParams.max_completion_tokens = 16000;
         } else {
-          // Modelos tradicionais
+          // Modelos tradicionais (GPT-4, GPT-3.5)
           requestParams.temperature = 0.3;
           requestParams.max_tokens = 4096;
           requestParams.response_format = responseFormat || { type: 'text' };
@@ -141,9 +204,17 @@ export class OpenAIService {
 
         const response = await this.client.chat.completions.create(requestParams);
 
+        logger.info(`📊 Response choices: ${response.choices?.length || 0}`);
+        if (response.choices?.[0]) {
+          logger.info(`📊 Message role: ${response.choices[0].message?.role}`);
+          logger.info(`📊 Content length: ${response.choices[0].message?.content?.length || 0}`);
+          logger.info(`📊 Finish reason: ${response.choices[0].finish_reason}`);
+        }
+
         const content = response.choices[0]?.message?.content;
 
         if (!content) {
+          logger.error('❌ Resposta vazia recebida:', JSON.stringify(response, null, 2));
           throw new Error('OpenAI retornou resposta vazia');
         }
 
@@ -165,7 +236,10 @@ export class OpenAIService {
   /**
    * PROMPT 1: Análise de Escopo do Projeto
    */
-  async analyzeProjectScope(files: { path: string; mimetype: string }[]): Promise<ProjectAnalysis> {
+  async analyzeProjectScope(
+    files: { path: string; mimetype: string }[],
+    additionalContext?: string
+  ): Promise<ProjectAnalysis> {
     logger.info('🔍 Iniciando análise de escopo com OpenAI...');
 
     const filesContent = await this.prepareFilesContent(files);
@@ -182,7 +256,11 @@ Retorne APENAS um JSON válido (sem markdown, sem \`\`\`json) com esta estrutura
   "risks": ["risco 1", "risco 2", ...]
 }`;
 
-    const userPrompt = `Analise os documentos fornecidos e extraia:
+    const contextText = additionalContext
+      ? `\n\n**CONTEXTO ADICIONAL FORNECIDO PELO USUÁRIO:**\n${additionalContext}\n\n`
+      : '';
+
+    const userPrompt = `Analise os documentos fornecidos e extraia:${contextText}
 1. Escopo geral do projeto
 2. Funcionalidades principais
 3. Integrações necessárias
@@ -321,10 +399,13 @@ Crie:
   /**
    * Método orquestrador - Análise completa
    */
-  async analyzeComplete(files: { path: string; mimetype: string }[]): Promise<CompleteAnalysis> {
+  async analyzeComplete(
+    files: { path: string; mimetype: string }[],
+    additionalContext?: string
+  ): Promise<CompleteAnalysis> {
     logger.info('🚀 Iniciando análise completa com OpenAI...');
 
-    const analysis = await this.analyzeProjectScope(files);
+    const analysis = await this.analyzeProjectScope(files, additionalContext);
     const teamEstimation = await this.estimateTeam(analysis);
     const schedule = await this.generateSchedule(teamEstimation);
 

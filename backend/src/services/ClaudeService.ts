@@ -82,7 +82,8 @@ export class ClaudeService {
    * Extrai escopo, funcionalidades, requisitos e complexidade
    */
   async analyzeProjectScope(
-    files: { path: string; mimetype: string }[]
+    files: { path: string; mimetype: string }[],
+    additionalContext?: string
   ): Promise<ProjectAnalysis> {
     try {
       logger.info(`Analisando escopo do projeto com ${files.length} documento(s)`);
@@ -106,9 +107,13 @@ export class ClaudeService {
       }
 
       // Adicionar prompt de análise
+      const contextText = additionalContext
+        ? `\n\n**CONTEXTO ADICIONAL FORNECIDO PELO USUÁRIO:**\n${additionalContext}\n\n`
+        : '';
+
       content.push({
         type: 'text',
-        text: `Analise os documentos fornecidos e identifique:
+        text: `Analise os documentos fornecidos e identifique:${contextText}
 
 1. **Escopo principal do projeto** - Descreva em 2-3 frases o objetivo principal
 2. **Funcionalidades core necessárias** - Liste as 5-10 funcionalidades mais importantes
@@ -337,13 +342,14 @@ Retorne APENAS um objeto JSON com esta estrutura:
    * Método orquestrador - Executa análise completa
    */
   async analyzeComplete(
-    files: { path: string; mimetype: string }[]
+    files: { path: string; mimetype: string }[],
+    additionalContext?: string
   ): Promise<CompleteAnalysis> {
     try {
       logger.info('🤖 Iniciando análise completa com Claude AI');
 
       // Passo 1: Análise de escopo
-      const analysis = await this.analyzeProjectScope(files);
+      const analysis = await this.analyzeProjectScope(files, additionalContext);
 
       // Passo 2: Estimativa de equipe
       const teamEstimation = await this.estimateTeam(analysis);

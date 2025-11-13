@@ -37,8 +37,63 @@ const userController = new UserController();
  *         description: Não autenticado
  *       403:
  *         description: Acesso negado (não é admin)
+ *   post:
+ *     tags: [Users]
+ *     summary: Cria novo usuário (apenas admin)
+ *     description: Cria um novo usuário no sistema. Requer permissão de administrador.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 example: João Silva
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: joao@example.com
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 minLength: 6
+ *                 example: senha123
+ *               role:
+ *                 type: string
+ *                 enum: [admin, user]
+ *                 default: user
+ *                 example: user
+ *     responses:
+ *       201:
+ *         description: Usuário criado com sucesso
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 message:
+ *                   type: string
+ *                   example: Usuário criado com sucesso
+ *                 data:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: Dados inválidos
+ *       401:
+ *         description: Não autenticado
+ *       403:
+ *         description: Acesso negado (não é admin)
  */
 router.get('/', authMiddleware, authorize('admin'), userController.list.bind(userController));
+router.post('/', authMiddleware, authorize('admin'), userController.create.bind(userController));
 
 /**
  * @swagger

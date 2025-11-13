@@ -196,15 +196,19 @@ export default function NewProposal() {
 
               <div>
                 <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
-                  Descrição (Opcional)
+                  Contexto Adicional (Opcional)
                 </label>
+                <p className="text-sm text-gray-500 mb-2">
+                  Adicione informações extras que a IA deve considerar na análise, como restrições técnicas,
+                  prazos específicos, tecnologias obrigatórias, preferências do cliente, etc.
+                </p>
                 <textarea
                   id="description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  rows={3}
+                  rows={5}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Descreva brevemente o projeto..."
+                  placeholder="Ex: Cliente prefere usar React e Node.js. Prazo máximo de 6 meses. Deve integrar com sistema SAP existente. Orçamento limitado a R$ 200.000..."
                 />
               </div>
             </div>

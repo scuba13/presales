@@ -38,14 +38,23 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token expirado ou inválido
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      // Verificar se é erro de autenticação da NOSSA API ou erro externo (OpenAI, etc)
+      const errorMessage = error.response?.data?.message || error.message || '';
+      const isExternalAPIError = errorMessage.includes('OpenAI') ||
+                                 errorMessage.includes('insufficient permissions') ||
+                                 errorMessage.includes('API key') ||
+                                 error.response?.data?.error?.includes('OpenAI');
 
-      // Redirecionar para login se não estiver nas rotas públicas
-      const publicRoutes = ['/login', '/register'];
-      if (!publicRoutes.includes(window.location.pathname)) {
-        window.location.href = '/login';
+      // Só deslogar se for erro de autenticação da nossa API
+      if (!isExternalAPIError) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+
+        // Redirecionar para login se não estiver nas rotas públicas
+        const publicRoutes = ['/login', '/register'];
+        if (!publicRoutes.includes(window.location.pathname)) {
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(error);
@@ -167,6 +176,14 @@ export const userService = {
     const { data } = await api.get<APIResponse<User>>(`/users/${id}`);
     if (!data.data) {
       throw new Error('Usuário não encontrado');
+    }
+    return data.data;
+  },
+
+  async create(userData: { name: string; email: string; password: string; role: string }): Promise<User> {
+    const { data } = await api.post<APIResponse<User>>('/users', userData);
+    if (!data.data) {
+      throw new Error(data.message || 'Erro ao criar usuário');
     }
     return data.data;
   },

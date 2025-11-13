@@ -3,6 +3,7 @@ import { AppDataSource } from '../config/database';
 import { User } from '../entities/User';
 import { logger } from '../config/logger';
 import { NotFoundError, UnauthorizedError, ValidationError } from '../middleware/errorHandler';
+import bcrypt from 'bcryptjs';
 
 export class UserController {
   private userRepository = AppDataSource.getRepository(User);
@@ -27,6 +28,68 @@ export class UserController {
       });
     } catch (error) {
       logger.error('Erro ao listar usuários:', error);
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/users
+   * Cria novo usuário (apenas admin)
+   */
+  async create(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { name, email, password, role } = req.body;
+
+      // Validações
+      if (!name || !email || !password) {
+        throw new ValidationError('Nome, email e senha são obrigatórios');
+      }
+
+      if (password.length < 6) {
+        throw new ValidationError('Senha deve ter no mínimo 6 caracteres');
+      }
+
+      // Validar formato de email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        throw new ValidationError('Email inválido');
+      }
+
+      // Verificar se email já existe
+      const existingUser = await this.userRepository.findOne({
+        where: { email: email.toLowerCase() },
+      });
+
+      if (existingUser) {
+        throw new ValidationError('Email já cadastrado');
+      }
+
+      // Hash da senha
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Criar usuário
+      const user = this.userRepository.create({
+        name,
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        role: role || 'user',
+        isActive: true,
+      });
+
+      await this.userRepository.save(user);
+
+      logger.info(`✅ Usuário criado: ${user.email}`);
+
+      // Remover senha da resposta
+      const { password: _, ...userWithoutPassword } = user;
+
+      return res.status(201).json({
+        status: 'success',
+        message: 'Usuário criado com sucesso',
+        data: userWithoutPassword,
+      });
+    } catch (error) {
+      logger.error('Erro ao criar usuário:', error);
       next(error);
     }
   }

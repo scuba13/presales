@@ -444,6 +444,58 @@ export class ProposalService {
   }
 
   /**
+   * Gera Excel como buffer (para download on-demand)
+   */
+  async generateExcelBuffer(id: string): Promise<Buffer> {
+    const proposalRepo = AppDataSource.getRepository(Proposal);
+    const proposal = await proposalRepo.findOne({
+      where: { id },
+      relations: ['resources', 'resources.professional'],
+    });
+
+    if (!proposal) {
+      throw new Error('Proposta não encontrada');
+    }
+
+    // Buscar parâmetros
+    const parameterRepo = AppDataSource.getRepository(Parameter);
+    const parameters = await parameterRepo.find();
+    const params = {
+      tax: Number(parameters.find((p) => p.name === 'tax')?.value) || 0.21,
+      sga: Number(parameters.find((p) => p.name === 'sga')?.value) || 0.1,
+      margin: Number(parameters.find((p) => p.name === 'margin')?.value) || 0.25,
+    };
+
+    logger.info('📊 Gerando Excel buffer on-demand...');
+
+    const buffer = await this.excelService.generateProposalBuffer({
+      clientName: proposal.clientName,
+      projectName: proposal.projectName,
+      resources: proposal.resources.map((r) => ({
+        role: r.professional.role,
+        hoursPerWeek: r.hoursPerWeek || [],
+        totalHours: r.totalHours,
+        hourlyCost: Number(r.professional.hourlyCost),
+        cost: r.cost,
+        price: r.price,
+      })),
+      totalCost: proposal.totalCost,
+      totalPrice: proposal.totalPrice,
+      duration: proposal.durationMonths,
+      schedule: (proposal.claudeAnalysis as any)?.schedule || {
+        sprints: [],
+        dependencies: [],
+        milestones: [],
+        riskBuffer: 0,
+      },
+      parameters: params,
+    });
+
+    logger.info('✅ Excel buffer gerado com sucesso');
+    return buffer;
+  }
+
+  /**
    * Deleta proposta
    */
   async deleteProposal(id: string): Promise<boolean> {

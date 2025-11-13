@@ -92,16 +92,6 @@ export default function Login() {
               {isLoading ? 'Entrando...' : 'Entrar'}
             </button>
           </form>
-
-          {/* Register Link */}
-          <div className="mt-6 text-center">
-            <p className="text-gray-600">
-              Não tem uma conta?{' '}
-              <Link to="/register" className="text-primary-600 hover:text-primary-700 font-medium">
-                Criar conta
-              </Link>
-            </p>
-          </div>
         </div>
 
         {/* Demo Credentials */}

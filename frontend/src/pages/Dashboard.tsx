@@ -140,6 +140,7 @@ export default function Dashboard() {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Projeto</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duração</th>
@@ -153,6 +154,25 @@ export default function Dashboard() {
                     <tr key={proposal.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{proposal.clientName}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          proposal.status === 'approved' || proposal.status === 'excel_generated'
+                            ? 'bg-green-100 text-green-800'
+                            : proposal.status === 'under_review' || proposal.status === 'generated'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : proposal.status === 'rejected'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {proposal.status === 'approved' ? 'Aprovada' :
+                           proposal.status === 'excel_generated' ? 'Excel Gerado' :
+                           proposal.status === 'under_review' ? 'Em Revisão' :
+                           proposal.status === 'generated' ? 'Gerada' :
+                           proposal.status === 'rejected' ? 'Rejeitada' :
+                           proposal.status === 'draft' ? 'Rascunho' :
+                           proposal.status}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm text-gray-900">{proposal.projectName}</div>

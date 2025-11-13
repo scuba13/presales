@@ -69,6 +69,37 @@ export class ExcelService {
   }
 
   /**
+   * Gera planilha Excel como buffer (para download on-demand)
+   */
+  async generateProposalBuffer(data: ProposalData): Promise<Buffer> {
+    try {
+      logger.info('📊 Gerando Excel buffer da proposta');
+
+      const workbook = new ExcelJS.Workbook();
+
+      // Configurar metadados
+      workbook.creator = 'Presales AI System';
+      workbook.created = new Date();
+      workbook.modified = new Date();
+
+      // Aba 1: Custo Solução e Sustentação
+      await this.createCostSheet(workbook, data);
+
+      // Aba 2: Cronograma
+      await this.createScheduleSheet(workbook, data);
+
+      // Gerar buffer
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      logger.info('✅ Excel buffer gerado');
+      return buffer as Buffer;
+    } catch (error) {
+      logger.error('Erro ao gerar Excel buffer:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Cria aba "Custo Solução e Sustentação"
    */
   private async createCostSheet(workbook: ExcelJS.Workbook, data: ProposalData) {
@@ -275,24 +306,31 @@ export class ExcelService {
   }
 
   /**
-   * Cria aba "Cronograma"
+   * Cria aba "Cronograma" com visual tipo Gantt Chart
    */
   private async createScheduleSheet(workbook: ExcelJS.Workbook, data: ProposalData) {
     const sheet = workbook.addWorksheet('Cronograma');
 
-    // Configurar largura das colunas
-    sheet.columns = [
-      { width: 15 }, // Sprint/Fase
-      { width: 50 }, // Descrição/Deliverables
-      { width: 15 }, // Status
-    ];
+    // Calcular número de semanas totais
+    const totalWeeks = data.duration * 4;
 
-    // Título
+    // Configurar largura das colunas: Fase/Sprint + Descrição + Semanas (S1-Sn)
+    const columns = [
+      { width: 25 }, // Fase/Sprint
+      { width: 50 }, // Descrição
+      ...Array(totalWeeks).fill({ width: 3 }), // S1, S2, S3... (colunas estreitas para visual compacto)
+    ];
+    sheet.columns = columns;
+
+    // Calcular última coluna
+    const lastColumn = String.fromCharCode(66 + totalWeeks); // B + totalWeeks
+
+    // Título principal
     const titleRow = sheet.getRow(1);
     titleRow.height = 30;
-    sheet.mergeCells('A1:C1');
+    sheet.mergeCells(`A1:${lastColumn}1`);
     const titleCell = sheet.getCell('A1');
-    titleCell.value = 'CRONOGRAMA DO PROJETO';
+    titleCell.value = 'CRONOGRAMA DO PROJETO - GANTT CHART';
     titleCell.font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
     titleCell.fill = {
       type: 'pattern',
@@ -301,52 +339,122 @@ export class ExcelService {
     };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-    let currentRow = 3;
+    // Subtítulo com duração
+    const subtitleRow = sheet.getRow(2);
+    subtitleRow.height = 20;
+    sheet.mergeCells(`A2:${lastColumn}2`);
+    const subtitleCell = sheet.getCell('A2');
+    subtitleCell.value = `Duração: ${data.duration} meses (${totalWeeks} semanas)`;
+    subtitleCell.font = { size: 11, bold: true };
+    subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-    // Milestones
-    sheet.getCell(`A${currentRow}`).value = 'MARCOS PRINCIPAIS';
-    sheet.getCell(`A${currentRow}`).font = { bold: true, size: 12 };
-    sheet.getCell(`A${currentRow}`).fill = {
+    // Headers
+    const headerRow = sheet.getRow(4);
+    headerRow.height = 25;
+
+    // Header: Fase/Sprint
+    const headerCell1 = headerRow.getCell(1);
+    headerCell1.value = 'Fase/Sprint';
+    headerCell1.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerCell1.fill = {
       type: 'pattern',
       pattern: 'solid',
-      fgColor: { argb: 'FFE7E6E6' },
+      fgColor: { argb: 'FF4472C4' },
     };
-    sheet.mergeCells(`A${currentRow}:C${currentRow}`);
-    currentRow++;
+    headerCell1.alignment = { horizontal: 'center', vertical: 'middle' };
 
-    data.schedule.milestones.forEach((milestone) => {
-      const row = sheet.getRow(currentRow);
-      row.getCell(1).value = milestone.date;
-      row.getCell(2).value = milestone.name;
-      row.getCell(3).value = '🎯';
-      row.height = 20;
-      currentRow++;
-    });
-
-    currentRow++;
-
-    // Sprints
-    sheet.getCell(`A${currentRow}`).value = 'SPRINTS E ENTREGAS';
-    sheet.getCell(`A${currentRow}`).font = { bold: true, size: 12 };
-    sheet.getCell(`A${currentRow}`).fill = {
+    // Header: Descrição
+    const headerCell2 = headerRow.getCell(2);
+    headerCell2.value = 'Descrição / Entregas';
+    headerCell2.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerCell2.fill = {
       type: 'pattern',
       pattern: 'solid',
-      fgColor: { argb: 'FFE7E6E6' },
+      fgColor: { argb: 'FF4472C4' },
     };
-    sheet.mergeCells(`A${currentRow}:C${currentRow}`);
-    currentRow++;
+    headerCell2.alignment = { horizontal: 'center', vertical: 'middle' };
 
+    // Headers: S1, S2, S3...
+    for (let i = 0; i < totalWeeks; i++) {
+      const cell = headerRow.getCell(3 + i);
+      cell.value = `S${i + 1}`;
+      cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF4472C4' },
+      };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', textRotation: 90 };
+      cell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+    }
+
+    // Bordas nos headers principais
+    headerCell1.border = {
+      top: { style: 'thin' },
+      bottom: { style: 'thin' },
+      left: { style: 'thin' },
+      right: { style: 'thin' },
+    };
+    headerCell2.border = {
+      top: { style: 'thin' },
+      bottom: { style: 'thin' },
+      left: { style: 'thin' },
+      right: { style: 'thin' },
+    };
+
+    let currentRow = 5;
+
+    // Sprints e suas entregas
     data.schedule.sprints.forEach((sprint) => {
       const row = sheet.getRow(currentRow);
-      row.getCell(1).value = `Sprint ${sprint.number}`;
-      row.getCell(1).font = { bold: true };
-      row.getCell(2).value = sprint.deliverables.join(', ');
-      row.getCell(3).value = '📋';
       row.height = 25;
 
-      // Bordas
-      for (let i = 1; i <= 3; i++) {
-        row.getCell(i).border = {
+      // Coluna 1: Sprint número
+      const sprintCell = row.getCell(1);
+      sprintCell.value = `Sprint ${sprint.number}`;
+      sprintCell.font = { bold: true };
+      sprintCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      sprintCell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+
+      // Coluna 2: Deliverables
+      const descCell = row.getCell(2);
+      descCell.value = sprint.deliverables.join(', ');
+      descCell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+      descCell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' },
+      };
+
+      // Colunas de semanas: pintar as semanas do sprint
+      // Assumir que cada sprint tem 2 semanas
+      const sprintDurationWeeks = 2;
+      const sprintStartWeek = (sprint.number - 1) * sprintDurationWeeks;
+
+      for (let w = 0; w < totalWeeks; w++) {
+        const weekCell = row.getCell(3 + w);
+
+        // Se a semana está dentro do sprint, pintar
+        if (w >= sprintStartWeek && w < sprintStartWeek + sprintDurationWeeks) {
+          weekCell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF5B9BD5' }, // Azul
+          };
+        }
+
+        weekCell.border = {
           top: { style: 'thin' },
           bottom: { style: 'thin' },
           left: { style: 'thin' },
@@ -357,34 +465,63 @@ export class ExcelService {
       currentRow++;
     });
 
+    // Adicionar linha em branco
     currentRow++;
 
-    // Dependências
-    if (data.schedule.dependencies && data.schedule.dependencies.length > 0) {
-      sheet.getCell(`A${currentRow}`).value = 'DEPENDÊNCIAS';
-      sheet.getCell(`A${currentRow}`).font = { bold: true, size: 12 };
-      sheet.getCell(`A${currentRow}`).fill = {
+    // Milestones
+    if (data.schedule.milestones && data.schedule.milestones.length > 0) {
+      const milestoneHeaderRow = sheet.getRow(currentRow);
+      milestoneHeaderRow.height = 25;
+
+      const milestoneHeaderCell = milestoneHeaderRow.getCell(1);
+      milestoneHeaderCell.value = 'MARCOS PRINCIPAIS';
+      milestoneHeaderCell.font = { bold: true, size: 11 };
+      milestoneHeaderCell.fill = {
         type: 'pattern',
         pattern: 'solid',
         fgColor: { argb: 'FFE7E6E6' },
       };
-      sheet.mergeCells(`A${currentRow}:C${currentRow}`);
+      sheet.mergeCells(`A${currentRow}:B${currentRow}`);
       currentRow++;
 
-      data.schedule.dependencies.forEach((dep) => {
+      data.schedule.milestones.forEach((milestone) => {
         const row = sheet.getRow(currentRow);
-        row.getCell(1).value = dep.task;
-        row.getCell(2).value = `Depende de: ${dep.dependsOn.join(', ')}`;
-        row.getCell(3).value = '🔗';
         row.height = 20;
+
+        const milestoneCell = row.getCell(1);
+        milestoneCell.value = milestone.date;
+        milestoneCell.font = { bold: true };
+
+        const descCell = row.getCell(2);
+        descCell.value = milestone.name;
+
+        // Adicionar ícone de milestone em uma semana específica
+        // Tentar extrair o mês do milestone.date (ex: "M3" = mês 3)
+        const monthMatch = milestone.date.match(/M(\d+)/);
+        if (monthMatch) {
+          const month = parseInt(monthMatch[1]);
+          const weekIndex = (month - 1) * 4; // Primeira semana do mês
+          if (weekIndex >= 0 && weekIndex < totalWeeks) {
+            const milestoneWeekCell = row.getCell(3 + weekIndex);
+            milestoneWeekCell.value = '🎯';
+            milestoneWeekCell.alignment = { horizontal: 'center', vertical: 'middle' };
+            milestoneWeekCell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFFD966' }, // Amarelo
+            };
+          }
+        }
+
         currentRow++;
       });
     }
 
-    // Buffer de risco
+    // Informações adicionais
     currentRow += 2;
-    sheet.getCell(`A${currentRow}`).value = `⚠️ Buffer de risco: ${data.schedule.riskBuffer}% (tempo adicional para contingências)`;
-    sheet.getCell(`A${currentRow}`).font = { italic: true };
-    sheet.mergeCells(`A${currentRow}:C${currentRow}`);
+    const infoCell = sheet.getCell(`A${currentRow}`);
+    infoCell.value = `⚠️ Buffer de risco: ${data.schedule.riskBuffer}% | Cada sprint tem 2 semanas`;
+    infoCell.font = { italic: true, size: 10 };
+    sheet.mergeCells(`A${currentRow}:${lastColumn}${currentRow}`);
   }
 }

@@ -3,7 +3,6 @@ import { AuthProvider } from './contexts/AuthContext'
 import PrivateRoute from './components/PrivateRoute'
 import Header from './components/Header'
 import Login from './pages/Login'
-import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import NewProposal from './pages/NewProposal'
 import ProposalReview from './pages/ProposalReview'
@@ -17,7 +16,6 @@ function App() {
       <Routes>
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
 
         {/* Private Routes */}
         <Route

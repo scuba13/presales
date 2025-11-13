@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userService } from '../services/api';
 import { useAuth } from '../hooks';
 import { User } from '../types';
-import { Shield, ShieldOff, Trash2, Edit, Search, AlertCircle } from 'lucide-react';
+import { Shield, ShieldOff, Trash2, Edit, Search, AlertCircle, Plus, X } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { Navigate } from 'react-router-dom';
 
@@ -12,6 +12,13 @@ export default function Users() {
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newUser, setNewUser] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: 'user' as 'admin' | 'user',
+  });
 
   // Redirect if not admin
   if (currentUser?.role !== 'admin') {
@@ -60,6 +67,22 @@ export default function Users() {
     },
   });
 
+  // Create mutation
+  const createMutation = useMutation({
+    mutationFn: (userData: { name: string; email: string; password: string; role: string }) =>
+      userService.create(userData),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success('Usuário criado com sucesso!');
+      setShowCreateModal(false);
+      setNewUser({ name: '', email: '', password: '', role: 'user' });
+    },
+    onError: (error: any) => {
+      const errorMessage = error.response?.data?.message || 'Erro ao criar usuário';
+      toast.error(errorMessage);
+    },
+  });
+
   const handleToggleActive = async (user: User) => {
     if (user.id === currentUser.id) {
       toast.error('Você não pode desativar sua própria conta');
@@ -91,6 +114,26 @@ export default function Users() {
     if (window.confirm(`Tem certeza que deseja excluir o usuário ${user.name}?`)) {
       deleteMutation.mutate(user.id);
     }
+  };
+
+  const handleCreateUser = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validações básicas
+    if (!newUser.name.trim()) {
+      toast.error('Nome é obrigatório');
+      return;
+    }
+    if (!newUser.email.trim()) {
+      toast.error('Email é obrigatório');
+      return;
+    }
+    if (!newUser.password || newUser.password.length < 6) {
+      toast.error('Senha deve ter no mínimo 6 caracteres');
+      return;
+    }
+
+    createMutation.mutate(newUser);
   };
 
   const getRoleBadge = (role: string) => {
@@ -129,9 +172,18 @@ export default function Users() {
   return (
     <div className="container mx-auto px-4 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Gerenciamento de Usuários</h1>
-        <p className="text-gray-600">Gerencie permissões e status dos usuários do sistema</p>
+      <div className="mb-8 flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Gerenciamento de Usuários</h1>
+          <p className="text-gray-600">Gerencie permissões e status dos usuários do sistema</p>
+        </div>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center space-x-2 transition-colors"
+        >
+          <Plus className="w-5 h-5" />
+          <span>Novo Usuário</span>
+        </button>
       </div>
 
       {/* Admin Warning */}
@@ -280,6 +332,111 @@ export default function Users() {
           </table>
         )}
       </div>
+
+      {/* Create User Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-900">Novo Usuário</h2>
+              <button
+                onClick={() => {
+                  setShowCreateModal(false);
+                  setNewUser({ name: '', email: '', password: '', role: 'user' });
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateUser} className="space-y-4">
+              {/* Nome */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nome Completo *
+                </label>
+                <input
+                  type="text"
+                  value={newUser.name}
+                  onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="João Silva"
+                  required
+                />
+              </div>
+
+              {/* Email */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email *
+                </label>
+                <input
+                  type="email"
+                  value={newUser.email}
+                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="joao@exemplo.com"
+                  required
+                />
+              </div>
+
+              {/* Senha */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Senha *
+                </label>
+                <input
+                  type="password"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Mínimo 6 caracteres"
+                  minLength={6}
+                  required
+                />
+              </div>
+
+              {/* Papel */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Papel
+                </label>
+                <select
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value as 'admin' | 'user' })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="user">Usuário</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setNewUser({ name: '', email: '', password: '', role: 'user' });
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={createMutation.isPending}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={createMutation.isPending}
+                >
+                  {createMutation.isPending ? 'Criando...' : 'Criar Usuário'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

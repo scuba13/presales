@@ -59,7 +59,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/node_modules
-      - backend_uploads:/app/uploads
+      - ./backend/uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,7 +87,6 @@ services:
 
 volumes:
   postgres_data:
-  backend_uploads:
   pgadmin_data:
 
 networks:

@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { proposalService, parameterService } from '../services/api'
-import { ArrowLeft, Save, Check, Star, Loader2, Sparkles, Brain } from 'lucide-react'
+import { ArrowLeft, Save, Check, Star, Loader2, Sparkles, Brain, Download, Plus } from 'lucide-react'
 import toast from 'react-hot-toast'
+import api from '../services/api'
 
 export default function ProposalReview() {
   const { id } = useParams<{ id: string }>()
@@ -21,6 +22,19 @@ export default function ProposalReview() {
   const [parameters, setParameters] = useState({ tax: 0.21, sga: 0.10, margin: 0.25 })
   const [isEditMode, setIsEditMode] = useState(false)
   const [proposalMargin, setProposalMargin] = useState<number>(25) // Margem da proposta em %
+  const [showAddProfessionalModal, setShowAddProfessionalModal] = useState(false)
+  const [selectedProfessionalId, setSelectedProfessionalId] = useState<string>('')
+  const [scheduleData, setScheduleData] = useState<{
+    sprints: Array<{ number: number; deliverables: string[]; startWeek: number; durationWeeks: number }>
+    milestones: Array<{ name: string; date: string; weekIndex: number }>
+    dependencies: Array<{ task: string; dependsOn: string[] }>
+    riskBuffer: number
+  }>({
+    sprints: [],
+    milestones: [],
+    dependencies: [],
+    riskBuffer: 15
+  })
 
   // Calcular número total de semanas baseado na duração do projeto
   const totalWeeks = durationMonths * 4
@@ -82,6 +96,15 @@ export default function ProposalReview() {
     queryFn: () => parameterService.list(),
   })
 
+  // Carregar profissionais disponíveis
+  const { data: professionals } = useQuery({
+    queryKey: ['professionals'],
+    queryFn: async () => {
+      const response = await api.get('/professionals')
+      return response.data.data
+    },
+  })
+
   // Atualizar parâmetros quando carregados
   useEffect(() => {
     if (parametersData) {
@@ -116,7 +139,11 @@ export default function ProposalReview() {
       setDurationMonths(proposal.durationMonths)
       setTotalCost(proposal.totalCost)
       setTotalPrice(proposal.totalPrice)
-      setDescription(proposal.description || '')
+
+      // Usar o scope da análise da IA como descrição
+      const analysis = proposal.claudeAnalysis as any
+      const aiGeneratedDescription = analysis?.analysis?.scope || proposal.description || ''
+      setDescription(aiGeneratedDescription)
 
       // Inicializar alocações por semana
       if (proposal.resources) {
@@ -129,17 +156,65 @@ export default function ProposalReview() {
         }))
         setResourceAllocations(allocations)
       }
+
+      // Inicializar cronograma
+      if (analysis?.schedule) {
+        const schedule = analysis.schedule
+        // Processar sprints: calcular startWeek baseado no número do sprint (assumindo 2 semanas cada)
+        const sprints = (schedule.sprints || []).map((sprint: any) => ({
+          number: sprint.number,
+          deliverables: Array.isArray(sprint.deliverables) ? sprint.deliverables : [sprint.deliverables],
+          startWeek: (sprint.number - 1) * 2, // Sprints de 2 semanas
+          durationWeeks: 2
+        }))
+
+        // Processar milestones: calcular weekIndex baseado no date (ex: "M3" = mês 3)
+        const milestones = (schedule.milestones || []).map((milestone: any) => {
+          const monthMatch = milestone.date.match(/M(\d+)/)
+          const weekIndex = monthMatch ? (parseInt(monthMatch[1]) - 1) * 4 : 0
+          return {
+            name: milestone.name,
+            date: milestone.date,
+            weekIndex
+          }
+        })
+
+        setScheduleData({
+          sprints,
+          milestones,
+          dependencies: schedule.dependencies || [],
+          riskBuffer: schedule.riskBuffer || 15
+        })
+      }
     }
   }, [proposal])
 
   const updateMutation = useMutation({
     mutationFn: async () => {
-      // Atualizar campos da proposta
+      // Preparar claudeAnalysis atualizado com o schedule editado
+      const updatedAnalysis = {
+        ...(proposal?.claudeAnalysis || {}),
+        schedule: {
+          sprints: scheduleData.sprints.map(s => ({
+            number: s.number,
+            deliverables: s.deliverables
+          })),
+          milestones: scheduleData.milestones.map(m => ({
+            name: m.name,
+            date: m.date
+          })),
+          dependencies: scheduleData.dependencies,
+          riskBuffer: scheduleData.riskBuffer
+        }
+      }
+
+      // Atualizar campos da proposta (incluindo cronograma)
       await proposalService.update(id!, {
         durationMonths,
         totalCost,
         totalPrice,
         description,
+        claudeAnalysis: updatedAnalysis,
       })
 
       // Atualizar alocações de recursos
@@ -167,7 +242,13 @@ export default function ProposalReview() {
       }),
     onSuccess: () => {
       toast.success('Proposta aprovada! Excel gerado com sucesso.')
-      navigate(`/proposals/${id}`)
+      // Invalidar queries para atualizar dados
+      queryClient.invalidateQueries({ queryKey: ['proposal', id] })
+      queryClient.invalidateQueries({ queryKey: ['proposals'] })
+      // Pequeno delay para garantir que o modo de visualização seja ativado
+      setTimeout(() => {
+        setIsEditMode(false)
+      }, 100)
     },
     onError: () => {
       toast.error('Erro ao aprovar proposta')
@@ -185,6 +266,69 @@ export default function ProposalReview() {
       return
     }
     approveMutation.mutate()
+  }
+
+  const handleDownloadExcel = async () => {
+    if (!proposal?.id) {
+      toast.error('Proposta não encontrada')
+      return
+    }
+
+    try {
+      const loadingToast = toast.loading('Gerando Excel...')
+      const blob = await proposalService.download(proposal.id)
+
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `proposta-${proposal.clientName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}.xlsx`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      toast.dismiss(loadingToast)
+      toast.success('Download iniciado!')
+    } catch (error) {
+      console.error('❌ Erro ao baixar Excel:', error)
+      toast.error('Erro ao gerar Excel')
+    }
+  }
+
+  const handleAddProfessional = () => {
+    if (!selectedProfessionalId) {
+      toast.error('Selecione um profissional')
+      return
+    }
+
+    const professional = professionals?.find((p: any) => p.id === selectedProfessionalId)
+    if (!professional) {
+      toast.error('Profissional não encontrado')
+      return
+    }
+
+    // Verificar se já existe
+    const exists = resourceAllocations.find(r => r.professionalName === professional.name)
+    if (exists) {
+      toast.error('Profissional já adicionado')
+      return
+    }
+
+    // Criar nova alocação com 0 horas em todas as semanas
+    const newAllocation = {
+      resourceId: `temp-${Date.now()}`, // ID temporário
+      professionalName: professional.name,
+      professionalRole: professional.role,
+      hourlyCost: professional.hourlyCost,
+      hoursPerWeek: Array(totalWeeks).fill(0),
+    }
+
+    setResourceAllocations([...resourceAllocations, newAllocation])
+    setShowAddProfessionalModal(false)
+    setSelectedProfessionalId('')
+    setIsEdited(true)
+    handleFieldChange()
+    toast.success('Profissional adicionado! Lembre-se de salvar.')
   }
 
   const formatCurrency = (value: number) => {
@@ -348,13 +492,22 @@ export default function ProposalReview() {
                   </button>
                 </>
               ) : (
-                <button
-                  onClick={() => setIsEditMode(true)}
-                  className="inline-flex items-center gap-2 bg-yellow-600 text-white px-6 py-3 rounded-lg hover:bg-yellow-700 transition-colors font-medium"
-                >
-                  <Save className="w-5 h-5" />
-                  Editar Proposta
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleDownloadExcel}
+                    className="inline-flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors font-medium"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Excel
+                  </button>
+                  <button
+                    onClick={() => setIsEditMode(true)}
+                    className="inline-flex items-center gap-2 bg-yellow-600 text-white px-6 py-3 rounded-lg hover:bg-yellow-700 transition-colors font-medium"
+                  >
+                    <Save className="w-5 h-5" />
+                    Editar Proposta
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -442,61 +595,25 @@ export default function ProposalReview() {
           </div>
         </div>
 
-        {/* Feedback da IA */}
-        <div className="bg-white rounded-lg shadow p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Feedback sobre a Previsão da IA</h2>
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Qual a precisão da estimativa inicial? (Opcional)
-            </label>
-            <div className="flex gap-2">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  onClick={() => setRating(star)}
-                  className="focus:outline-none"
-                >
-                  <Star
-                    className={`w-8 h-8 ${
-                      star <= rating
-                        ? 'fill-yellow-400 text-yellow-400'
-                        : 'text-gray-300'
-                    } hover:text-yellow-400 transition-colors`}
-                  />
-                </button>
-              ))}
-            </div>
-            <p className="text-sm text-gray-500 mt-2">
-              {rating === 0 && 'Clique nas estrelas para avaliar'}
-              {rating === 1 && 'Muito impreciso'}
-              {rating === 2 && 'Impreciso'}
-              {rating === 3 && 'Razoável'}
-              {rating === 4 && 'Preciso'}
-              {rating === 5 && 'Muito preciso'}
-            </p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Comentários adicionais (Opcional)
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              placeholder="Descreva quais ajustes foram necessários e por quê..."
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-        </div>
-
         {/* Alocação Semanal de Recursos (Editável) */}
         {resourceAllocations.length > 0 && totalWeeks > 0 && (
           <div className="bg-white rounded-lg shadow mb-8">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-xl font-semibold text-gray-900">Alocação Semanal de Recursos</h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Edite as horas por semana para cada profissional ({totalWeeks} semanas = {durationMonths} meses)
-              </p>
+            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Alocação Semanal de Recursos</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Edite as horas por semana para cada profissional ({totalWeeks} semanas = {durationMonths} meses)
+                </p>
+              </div>
+              {isEditMode && (
+                <button
+                  onClick={() => setShowAddProfessionalModal(true)}
+                  className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                  Adicionar Profissional
+                </button>
+              )}
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
@@ -667,7 +784,328 @@ export default function ProposalReview() {
             </div>
           </div>
         )}
+
+        {/* Grade de Cronograma */}
+        {!isLoading && proposal && (
+          <div className="bg-white rounded-lg shadow p-6 mb-8">
+            <h2 className="text-xl font-semibold text-gray-900 mb-6">Cronograma do Projeto</h2>
+
+            {/* Gantt Chart Simplificado */}
+            <div className="overflow-x-auto mb-6">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10 border-r min-w-[120px]">
+                      Sprint
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[300px]">
+                      Entregas
+                    </th>
+                    {Array.from({ length: totalWeeks }, (_, i) => (
+                      <th key={i} className="px-1 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[40px]">
+                        S{i + 1}
+                      </th>
+                    ))}
+                    {isEditMode && (
+                      <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[80px]">
+                        Ações
+                      </th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {scheduleData.sprints.map((sprint, sprintIdx) => (
+                    <tr key={sprintIdx} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-white z-10 border-r">
+                        Sprint {sprint.number}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {isEditMode ? (
+                          <input
+                            type="text"
+                            value={sprint.deliverables.join(', ')}
+                            onChange={(e) => {
+                              const newSprints = [...scheduleData.sprints]
+                              newSprints[sprintIdx].deliverables = e.target.value.split(',').map(s => s.trim())
+                              setScheduleData({ ...scheduleData, sprints: newSprints })
+                              setIsEdited(true)
+                            }}
+                            className="w-full px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="Separar entregas por vírgula"
+                          />
+                        ) : (
+                          <span>{sprint.deliverables.join(', ')}</span>
+                        )}
+                      </td>
+                      {Array.from({ length: totalWeeks }, (_, weekIdx) => {
+                        const isInSprint = weekIdx >= sprint.startWeek && weekIdx < sprint.startWeek + sprint.durationWeeks
+                        return (
+                          <td
+                            key={weekIdx}
+                            className={`px-1 py-3 text-center cursor-pointer border ${
+                              isInSprint ? 'bg-blue-500' : 'bg-white hover:bg-gray-100'
+                            }`}
+                            onClick={() => {
+                              if (isEditMode) {
+                                const newSprints = [...scheduleData.sprints]
+                                // Toggle: se clicou em uma semana do sprint, ajustar
+                                if (isInSprint) {
+                                  // Reduzir duração
+                                  newSprints[sprintIdx].durationWeeks = Math.max(1, newSprints[sprintIdx].durationWeeks - 1)
+                                } else {
+                                  // Expandir ou mover sprint
+                                  if (weekIdx < sprint.startWeek) {
+                                    newSprints[sprintIdx].startWeek = weekIdx
+                                  } else {
+                                    newSprints[sprintIdx].durationWeeks = weekIdx - sprint.startWeek + 1
+                                  }
+                                }
+                                setScheduleData({ ...scheduleData, sprints: newSprints })
+                                setIsEdited(true)
+                              }
+                            }}
+                          >
+                            {isInSprint && <div className="w-full h-4 bg-blue-500 rounded"></div>}
+                          </td>
+                        )
+                      })}
+                      {isEditMode && (
+                        <td className="px-3 py-3 text-center">
+                          <button
+                            onClick={() => {
+                              const newSprints = scheduleData.sprints.filter((_, idx) => idx !== sprintIdx)
+                              setScheduleData({ ...scheduleData, sprints: newSprints })
+                              setIsEdited(true)
+                            }}
+                            className="text-red-600 hover:text-red-900 text-sm"
+                          >
+                            Remover
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Adicionar Sprint */}
+            {isEditMode && (
+              <div className="mb-6">
+                <button
+                  onClick={() => {
+                    const newSprintNumber = scheduleData.sprints.length + 1
+                    const newSprint = {
+                      number: newSprintNumber,
+                      deliverables: ['Nova entrega'],
+                      startWeek: (newSprintNumber - 1) * 2,
+                      durationWeeks: 2
+                    }
+                    setScheduleData({
+                      ...scheduleData,
+                      sprints: [...scheduleData.sprints, newSprint]
+                    })
+                    setIsEdited(true)
+                  }}
+                  className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                  Adicionar Sprint
+                </button>
+              </div>
+            )}
+
+            {/* Milestones */}
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Marcos Principais</h3>
+              <div className="space-y-3">
+                {scheduleData.milestones.map((milestone, idx) => (
+                  <div key={idx} className="flex items-center gap-4">
+                    <div className="flex-1 grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Data (ex: M3)</label>
+                        <input
+                          type="text"
+                          value={milestone.date}
+                          onChange={(e) => {
+                            const newMilestones = [...scheduleData.milestones]
+                            newMilestones[idx].date = e.target.value
+                            // Recalcular weekIndex
+                            const monthMatch = e.target.value.match(/M(\d+)/)
+                            newMilestones[idx].weekIndex = monthMatch ? (parseInt(monthMatch[1]) - 1) * 4 : 0
+                            setScheduleData({ ...scheduleData, milestones: newMilestones })
+                            setIsEdited(true)
+                          }}
+                          disabled={!isEditMode}
+                          className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
+                        <input
+                          type="text"
+                          value={milestone.name}
+                          onChange={(e) => {
+                            const newMilestones = [...scheduleData.milestones]
+                            newMilestones[idx].name = e.target.value
+                            setScheduleData({ ...scheduleData, milestones: newMilestones })
+                            setIsEdited(true)
+                          }}
+                          disabled={!isEditMode}
+                          className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+                        />
+                      </div>
+                    </div>
+                    {isEditMode && (
+                      <button
+                        onClick={() => {
+                          const newMilestones = scheduleData.milestones.filter((_, i) => i !== idx)
+                          setScheduleData({ ...scheduleData, milestones: newMilestones })
+                          setIsEdited(true)
+                        }}
+                        className="text-red-600 hover:text-red-900 text-sm px-3 py-2"
+                      >
+                        Remover
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {isEditMode && (
+                <button
+                  onClick={() => {
+                    const newMilestone = {
+                      name: 'Novo marco',
+                      date: 'M1',
+                      weekIndex: 0
+                    }
+                    setScheduleData({
+                      ...scheduleData,
+                      milestones: [...scheduleData.milestones, newMilestone]
+                    })
+                    setIsEdited(true)
+                  }}
+                  className="mt-4 inline-flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                  Adicionar Marco
+                </button>
+              )}
+            </div>
+
+            {/* Buffer de Risco */}
+            <div className="flex items-center gap-4">
+              <label className="text-sm font-medium text-gray-700">Buffer de Risco (%):</label>
+              <input
+                type="number"
+                min="0"
+                max="50"
+                step="5"
+                value={scheduleData.riskBuffer}
+                onChange={(e) => {
+                  setScheduleData({ ...scheduleData, riskBuffer: parseFloat(e.target.value) || 0 })
+                  setIsEdited(true)
+                }}
+                disabled={!isEditMode}
+                className="w-20 px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+              />
+              <span className="text-sm text-gray-500">Tempo adicional para contingências</span>
+            </div>
+          </div>
+        )}
+
+        {/* Feedback da IA */}
+        <div className="bg-white rounded-lg shadow p-6 mb-8">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Feedback sobre a Previsão da IA</h2>
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Qual a precisão da estimativa inicial? (Opcional)
+            </label>
+            <div className="flex gap-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  onClick={() => setRating(star)}
+                  className="focus:outline-none"
+                >
+                  <Star
+                    className={`w-8 h-8 ${
+                      star <= rating
+                        ? 'fill-yellow-400 text-yellow-400'
+                        : 'text-gray-300'
+                    } hover:text-yellow-400 transition-colors`}
+                  />
+                </button>
+              ))}
+            </div>
+            <p className="text-sm text-gray-500 mt-2">
+              {rating === 0 && 'Clique nas estrelas para avaliar'}
+              {rating === 1 && 'Muito impreciso'}
+              {rating === 2 && 'Impreciso'}
+              {rating === 3 && 'Razoável'}
+              {rating === 4 && 'Preciso'}
+              {rating === 5 && 'Muito preciso'}
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Comentários adicionais (Opcional)
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Descreva quais ajustes foram necessários e por quê..."
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+        </div>
       </main>
+
+      {/* Modal Adicionar Profissional */}
+      {showAddProfessionalModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Adicionar Profissional</h3>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Selecione o Profissional
+              </label>
+              <select
+                value={selectedProfessionalId}
+                onChange={(e) => setSelectedProfessionalId(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">-- Selecione --</option>
+                {professionals?.map((prof: any) => (
+                  <option key={prof.id} value={prof.id}>
+                    {prof.name} - {prof.role} (R$ {prof.hourlyCost}/h)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowAddProfessionalModal(false)
+                  setSelectedProfessionalId('')
+                }}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAddProfessional}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Adicionar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -150,7 +150,7 @@ export class ProposalController {
 
   /**
    * GET /api/proposals/:id/download
-   * Download do Excel da proposta
+   * Download do Excel da proposta (gera on-demand se não existir)
    */
   async download(req: Request, res: Response, next: NextFunction) {
     try {
@@ -165,25 +165,29 @@ export class ProposalController {
         });
       }
 
-      if (!proposal.excelFilePath) {
-        return res.status(404).json({
-          status: 'error',
-          message: 'Arquivo Excel não encontrado',
-        });
+      // Se já tem arquivo salvo E existe no disco, baixar o arquivo salvo
+      if (proposal.excelFilePath) {
+        try {
+          await fs.access(proposal.excelFilePath);
+          logger.info(`📥 Baixando Excel salvo: ${proposal.excelFilePath}`);
+          return res.download(proposal.excelFilePath);
+        } catch {
+          logger.warn(`⚠️ Arquivo Excel não encontrado no disco: ${proposal.excelFilePath}`);
+          // Arquivo não existe, gerar on-demand abaixo
+        }
       }
 
-      // Verificar se arquivo existe
-      try {
-        await fs.access(proposal.excelFilePath);
-      } catch {
-        return res.status(404).json({
-          status: 'error',
-          message: 'Arquivo Excel não existe no servidor',
-        });
-      }
+      // Gerar Excel on-demand
+      logger.info(`📊 Gerando Excel on-demand para proposta ${id}`);
+      const buffer = await this.proposalService.generateExcelBuffer(id);
 
-      // Enviar arquivo
-      return res.download(proposal.excelFilePath);
+      // Configurar headers para download
+      const filename = `proposta-${proposal.clientName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+
+      return res.send(buffer);
     } catch (error) {
       logger.error('Erro ao fazer download da proposta:', error);
       next(error);
